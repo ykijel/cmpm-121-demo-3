@@ -1,222 +1,304 @@
 // @deno-types="npm:@types/leaflet@^1.9.14"
 import leaflet from "leaflet";
-
-// Style sheets
 import "leaflet/dist/leaflet.css";
 import "./style.css";
-
-// Fix missing marker images
 import "./leafletWorkaround.ts";
-
-// Deterministic random number generator (for non-spawn-related needs)
 import luck from "./luck.ts";
 
-const APP_NAME = "Geocoin Carrier";
-document.title = APP_NAME;
+// Game configuration
+const CONFIG = {
+  APP_NAME: "Geocoin Carrier",
+  GAMEPLAY_ZOOM_LEVEL: 19,
+  TILE_DEGREES: 1e-4,
+  NEIGHBORHOOD_SIZE: 8,
+  CACHE_SPAWN_PROBABILITY: 0.1,
+  INITIAL_LOCATION: {
+    lat: 36.98949379578401,
+    lng: -122.06277128548504,
+  },
+} as const;
 
-// New coordinate system anchored at Null Island
-const NULL_ISLAND = { lat: 0, lng: 0 };
-
-// Player variables
-const playerLocation = leaflet.latLng(36.98949379578401, -122.06277128548504);
-const playerInventory: Coin[] = [];
-
-// Tunable gameplay parameters
-const GAMEPLAY_ZOOM_LEVEL = 19;
-const TILE_DEGREES = 1e-4;
-const NEIGHBORHOOD_SIZE = 8;
-const CACHE_SPAWN_PROBABILITY = 0.1;
-
-// --------------------------------- Interfaces ---------------------------------
-
-// Cell coordinates
+// Types
 interface Cell {
   i: number;
   j: number;
 }
 
-// Coin data
 interface Coin {
   cell: Cell;
   serial: number;
 }
 
-// Cache data
 interface Cache {
   cell: Cell;
   coins: Coin[];
 }
 
-// --------------------------------- Game Logic ---------------------------------
-
-// Create the map (element with id "map" is defined in index.html)
-const map = leaflet.map(document.getElementById("map")!, {
-  center: playerLocation,
-  zoom: GAMEPLAY_ZOOM_LEVEL,
-  minZoom: GAMEPLAY_ZOOM_LEVEL,
-  maxZoom: GAMEPLAY_ZOOM_LEVEL,
-  zoomControl: false,
-  scrollWheelZoom: false,
-  closePopupOnClick: false,
-});
-
-// Populate the map with a background tile layer
-leaflet
-  .tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution:
-      '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  })
-  .addTo(map);
-
-// Add a marker to represent the player
-const playerMarker = leaflet.marker(playerLocation);
-playerMarker.bindTooltip("Your current location.");
-playerMarker.addTo(map);
-
-// Display the player's inventory using the status panel
-const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
-const defaultText = "No coins yet...";
-statusPanel.innerHTML = defaultText;
-
-const caches = new Map<Cell, Cache>();
-
-// Look around the player's neighborhood for caches to spawn
-const visibleCells = getVisibleCells(playerLocation);
-visibleCells.forEach((cell) => {
-  // Use Math.random() to randomly spawn caches
-  if (Math.random() < CACHE_SPAWN_PROBABILITY) {
-    spawnCache(cell);
-  }
-});
-
-// --------------------------------- Functions ---------------------------------
-
-// Get the surrounding cells of a given coordinate
-function getVisibleCells(coord: { lat: number; lng: number }): Cell[] {
-  const visibleCells: Cell[] = [];
-  const offset = {
-    i: Math.floor((coord.lat - NULL_ISLAND.lat) / TILE_DEGREES),
-    j: Math.floor((coord.lng - NULL_ISLAND.lng) / TILE_DEGREES),
-  };
-  for (
-    let i = offset.i - NEIGHBORHOOD_SIZE;
-    i < offset.i + NEIGHBORHOOD_SIZE;
-    i++
-  ) {
-    for (
-      let j = offset.j - NEIGHBORHOOD_SIZE;
-      j < offset.j + NEIGHBORHOOD_SIZE;
-      j++
-    ) {
-      visibleCells.push({ i, j });
-    }
-  }
-  return visibleCells;
+interface MoveDirection {
+  dx: number;
+  dy: number;
 }
 
-// Add caches to the map by cell numbers
-function spawnCache(cell: Cell) {
-  let cache = caches.get(cell);
-  if (!cache) {
-    cache = { cell, coins: [] };
-    generateCoins(cell, cache);
-    caches.set(cell, cache);
-  }
-
-  const latLngBounds = leaflet.latLngBounds([
-    [
-      NULL_ISLAND.lat + cell.i * TILE_DEGREES,
-      NULL_ISLAND.lng + cell.j * TILE_DEGREES,
-    ],
-    [
-      NULL_ISLAND.lat + (cell.i + 1) * TILE_DEGREES,
-      NULL_ISLAND.lng + (cell.j + 1) * TILE_DEGREES,
-    ],
-  ]);
-
-  const rect = leaflet.rectangle(latLngBounds, { color: "blue", weight: 1 });
-  rect.addTo(map);
-
-  rect.bindPopup(() => {
-    const popupDiv = document.createElement("div");
-    return updateCachePopup(popupDiv, cache);
-  }, { keepInView: true });
+interface MoveButtons {
+  up: MoveDirection;
+  down: MoveDirection;
+  left: MoveDirection;
+  right: MoveDirection;
 }
 
-// Generate coins for a cache
-function generateCoins(cell: Cell, cache: Cache) {
-  const numCoins = Math.floor(
-    luck([cell.i, cell.j, "numCoins"].toString()) * 3 + 1,
-  );
-  for (let k = 0; k < numCoins; k++) {
-    cache.coins.push({ cell, serial: k });
-  }
-}
+class GameState {
+  private playerLocation: leaflet.LatLng;
+  private playerInventory: Coin[] = [];
+  private caches = new Map<string, string>();
+  private cacheMarkers = new Map<string, leaflet.Rectangle>();
+  private map: leaflet.Map;
+  private playerMarker: leaflet.Marker;
+  private statusPanel: HTMLDivElement;
 
-// Collect a coin from a cache
-function collect(coin: Coin, cache: Cache) {
-  playerInventory.push(coin);
-  const index = cache.coins.indexOf(coin);
-  if (index > -1) cache.coins.splice(index, 1);
-  displayInventory();
-}
-
-// Deposit all coins from the player's inventory into a cache
-function deposit(cache: Cache) {
-  while (playerInventory.length > 0) {
-    const coin = playerInventory.pop();
-    cache.coins.push(coin!);
-  }
-  displayInventory();
-}
-
-// Update the status panel with the player's inventory
-function displayInventory() {
-  let text = "";
-  if (playerInventory.length > 0) {
-    for (const coin of playerInventory) {
-      text += `<ul><li>${coin.cell.i}:${coin.cell.j}#${coin.serial}</li></ul>`;
-    }
-  } else text = defaultText;
-  statusPanel.innerHTML = text;
-}
-
-// Update the cache popup with the current cache contents
-function updateCachePopup(popupDiv: HTMLElement, cache: Cache) {
-  popupDiv.innerHTML =
-    `<div>Cache ${cache.cell.i}:${cache.cell.j}<br><br>Inventory:<br></div>`;
-  popupDiv.appendChild(updateCacheCoinDisplay(popupDiv, cache));
-
-  const depositButton = document.createElement("button");
-  depositButton.textContent = "Deposit Coins";
-  depositButton.addEventListener("click", () => {
-    deposit(cache);
-    updateCachePopup(popupDiv, cache);
-  });
-  popupDiv.appendChild(depositButton);
-  return popupDiv;
-}
-
-// Display the coins in the cache
-function updateCacheCoinDisplay(popupDiv: HTMLElement, cache: Cache) {
-  const cacheDiv = document.createElement("div");
-
-  for (const coin of cache.coins) {
-    const coinDiv = document.createElement("span");
-    coinDiv.innerHTML =
-      `<ul><li><span>${coin.cell.i}:${coin.cell.j}#${coin.serial}<span><button id="poke">Collect Coin</button></li></ul>`;
-    coinDiv.querySelector<HTMLButtonElement>("#poke")!.addEventListener(
-      "click",
-      () => {
-        collect(coin, cache);
-        coinDiv.querySelector<HTMLButtonElement>("#poke")!.textContent =
-          "Collected";
-        coinDiv.querySelector<HTMLButtonElement>("#poke")!.disabled = true;
-        updateCachePopup(popupDiv, cache);
-      },
+  constructor() {
+    this.playerLocation = leaflet.latLng(
+      CONFIG.INITIAL_LOCATION.lat,
+      CONFIG.INITIAL_LOCATION.lng,
     );
-    cacheDiv.appendChild(coinDiv);
+    document.title = CONFIG.APP_NAME;
+
+    this.map = this.initializeMap();
+    this.playerMarker = this.initializePlayerMarker();
+    this.statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
+
+    this.initializeStartingCaches();
+    this.setupControls();
   }
-  return cacheDiv;
+
+  private initializeMap(): leaflet.Map {
+    const map = leaflet.map(document.getElementById("map")!, {
+      center: this.playerLocation,
+      zoom: CONFIG.GAMEPLAY_ZOOM_LEVEL,
+      minZoom: CONFIG.GAMEPLAY_ZOOM_LEVEL,
+      maxZoom: CONFIG.GAMEPLAY_ZOOM_LEVEL,
+      zoomControl: false,
+      scrollWheelZoom: false,
+      closePopupOnClick: false,
+    });
+
+    leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution:
+        '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(map);
+
+    return map;
+  }
+
+  private initializePlayerMarker(): leaflet.Marker {
+    const marker = leaflet.marker(this.playerLocation);
+    marker.bindTooltip("Your current location.");
+    marker.addTo(this.map);
+    return marker;
+  }
+
+  private initializeStartingCaches(): void {
+    const cells = this.getVisibleCells(this.playerLocation);
+    for (let i = 0; i < cells.length; i++) {
+      if (
+        luck([cells[i].i, cells[i].j].toString()) <
+          CONFIG.CACHE_SPAWN_PROBABILITY
+      ) {
+        this.spawnCache(cells[i]);
+      }
+    }
+  }
+
+  private setupControls(): void {
+    const moveButtons: MoveButtons = {
+      up: { dx: CONFIG.TILE_DEGREES, dy: 0 },
+      down: { dx: -CONFIG.TILE_DEGREES, dy: 0 },
+      left: { dx: 0, dy: -CONFIG.TILE_DEGREES },
+      right: { dx: 0, dy: CONFIG.TILE_DEGREES },
+    };
+
+    // Using a traditional for...in loop instead of Object.entries
+    for (const direction in moveButtons) {
+      const delta = moveButtons[direction as keyof MoveButtons];
+      const buttonId = `#move${direction.charAt(0).toUpperCase()}${
+        direction.slice(1)
+      }`;
+      const button = document.querySelector<HTMLButtonElement>(buttonId);
+      if (button) {
+        button.addEventListener("click", () => {
+          this.movePlayer({
+            i: this.playerLocation.lat + delta.dx,
+            j: this.playerLocation.lng + delta.dy,
+          });
+        });
+      }
+    }
+  }
+
+  private movePlayer(newPos: Cell): void {
+    this.playerLocation.lat = newPos.i;
+    this.playerLocation.lng = newPos.j;
+    this.playerMarker.setLatLng(this.playerLocation);
+    this.map.panTo(this.playerLocation);
+    this.updateCaches();
+  }
+
+  private getVisibleCells(coord: { lat: number; lng: number }): Cell[] {
+    const cells: Cell[] = [];
+    const offset = {
+      i: Math.floor(coord.lat / CONFIG.TILE_DEGREES),
+      j: Math.floor(coord.lng / CONFIG.TILE_DEGREES),
+    };
+
+    for (
+      let di = -CONFIG.NEIGHBORHOOD_SIZE;
+      di < CONFIG.NEIGHBORHOOD_SIZE;
+      di++
+    ) {
+      for (
+        let dj = -CONFIG.NEIGHBORHOOD_SIZE;
+        dj < CONFIG.NEIGHBORHOOD_SIZE;
+        dj++
+      ) {
+        cells.push({
+          i: offset.i + di,
+          j: offset.j + dj,
+        });
+      }
+    }
+
+    return cells;
+  }
+
+  private spawnCache(cell: Cell): void {
+    const cellString = this.cellToString(cell);
+    let cache: Cache = this.caches.has(cellString)
+      ? JSON.parse(this.caches.get(cellString)!)
+      : this.generateNewCache(cell);
+
+    const bounds = leaflet.latLngBounds([
+      [cell.i * CONFIG.TILE_DEGREES, cell.j * CONFIG.TILE_DEGREES],
+      [(cell.i + 1) * CONFIG.TILE_DEGREES, (cell.j + 1) * CONFIG.TILE_DEGREES],
+    ]);
+
+    const rect = leaflet.rectangle(bounds);
+    rect.addTo(this.map);
+    rect.bindPopup(() => this.createCachePopup(cache), { keepInView: true });
+
+    this.cacheMarkers.set(cellString, rect);
+  }
+
+  private generateNewCache(cell: Cell): Cache {
+    const cache: Cache = { cell, coins: [] };
+    const numCoins = Math.floor(
+      luck([cell.i, cell.j, "numCoins"].toString()) * 3 + 1,
+    );
+
+    for (let k = 0; k < numCoins; k++) {
+      cache.coins.push({ cell, serial: k });
+    }
+
+    this.caches.set(this.cellToString(cell), JSON.stringify(cache));
+    return cache;
+  }
+
+  private createCachePopup(cache: Cache): HTMLElement {
+    const popupDiv = document.createElement("div");
+    popupDiv.innerHTML =
+      `<div>Cache ${cache.cell.i}:${cache.cell.j}<br><br>Inventory:<br></div>`;
+
+    const coinsDiv = document.createElement("div");
+    cache.coins.forEach((coin) => {
+      const coinDiv = document.createElement("div");
+      coinDiv.innerHTML = `
+        <ul><li>
+          <span>${coin.cell.i}:${coin.cell.j}#${coin.serial}</span>
+          <button id="collect-${coin.serial}">Collect Coin</button>
+        </li></ul>`;
+
+      const button = coinDiv.querySelector(`#collect-${coin.serial}`);
+      if (button) {
+        button.addEventListener("click", (e) => {
+          this.collectCoin(coin, cache);
+          const target = e.target as HTMLButtonElement;
+          target.textContent = "Collected";
+          target.disabled = true;
+          popupDiv.replaceWith(this.createCachePopup(cache));
+        });
+      }
+
+      coinsDiv.appendChild(coinDiv);
+    });
+
+    const depositButton = document.createElement("button");
+    depositButton.textContent = "Deposit Coins";
+    depositButton.addEventListener("click", () => {
+      this.depositCoins(cache);
+      popupDiv.replaceWith(this.createCachePopup(cache));
+    });
+
+    popupDiv.appendChild(coinsDiv);
+    popupDiv.appendChild(depositButton);
+    return popupDiv;
+  }
+
+  private collectCoin(coin: Coin, cache: Cache): void {
+    this.playerInventory.push(coin);
+    cache.coins = cache.coins.filter((c) => c !== coin);
+    this.caches.set(this.cellToString(cache.cell), JSON.stringify(cache));
+    this.updateInventoryDisplay();
+  }
+
+  private depositCoins(cache: Cache): void {
+    cache.coins.push(...this.playerInventory);
+    this.playerInventory = [];
+    this.caches.set(this.cellToString(cache.cell), JSON.stringify(cache));
+    this.updateInventoryDisplay();
+  }
+
+  private updateCaches(): void {
+    const visibleCells = this.getVisibleCells(this.playerLocation);
+    const visibleCellStrings = new Set(
+      visibleCells.map((cell) => this.cellToString(cell)),
+    );
+
+    // Remove out-of-view caches
+    for (const [cellString, marker] of this.cacheMarkers) {
+      if (!visibleCellStrings.has(cellString)) {
+        marker.remove();
+        this.cacheMarkers.delete(cellString);
+      }
+    }
+
+    // Spawn new caches
+    visibleCells.forEach((cell) => {
+      const cellString = this.cellToString(cell);
+      if (
+        !this.cacheMarkers.has(cellString) &&
+        luck([cell.i, cell.j].toString()) < CONFIG.CACHE_SPAWN_PROBABILITY
+      ) {
+        this.spawnCache(cell);
+      }
+    });
+  }
+
+  private updateInventoryDisplay(): void {
+    if (this.playerInventory.length === 0) {
+      this.statusPanel.innerHTML = "No coins yet...";
+      return;
+    }
+
+    const items = this.playerInventory.map(
+      (coin) =>
+        `<ul><li>${coin.cell.i}:${coin.cell.j}#${coin.serial}</li></ul>`,
+    );
+    this.statusPanel.innerHTML = items.join("");
+  }
+
+  private cellToString(cell: Cell): string {
+    return `${cell.i},${cell.j}`;
+  }
 }
+
+// Initialize the game
+new GameState();
