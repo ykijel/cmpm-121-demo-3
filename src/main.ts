@@ -172,7 +172,7 @@ class GameState {
 
   private spawnCache(cell: Cell): void {
     const cellString = this.cellToString(cell);
-    let cache: Cache = this.caches.has(cellString)
+    const cache: Cache = this.caches.has(cellString)
       ? JSON.parse(this.caches.get(cellString)!)
       : this.generateNewCache(cell);
 
