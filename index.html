@@ -6,15 +6,19 @@
   </head>
   <body>
     <div id="app">
-      <h1>Geocoin Carrier</h1>
-      <div id="controls">
-        <button id="moveUp">⬆️</button>
-        <button id="moveDown">⬇️</button>
-        <button id="moveLeft">⬅️</button>
-        <button id="moveRight">➡️</button>
-      </div>
+      <h1>GeoCoin Carrier</h1>
       <div id="statusPanel"></div>
-      <div id="map"></div>
+      <div id="controlPanel">
+        <button id="sensor" title="sensor">🌐</button>
+        <button id="north" title="north">⬆️</button>
+        <button id="south" title="south">⬇️</button>
+        <button id="west" title="west">⬅️</button>
+        <button id="east" title="east">➡️</button>
+        <button id="reset" title="reset">🚮</button>
+      </div>
+      <div id="map-container">
+        <div id="map"></div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
