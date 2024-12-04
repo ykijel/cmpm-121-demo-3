@@ -53,9 +53,9 @@ class CacheManager {
   private updateInventoryCallback: (inventory: Array<Coin>) => void;
 
   constructor(
-    map: leaflet.Map, 
-    playerLocation: leaflet.LatLngTuple, 
-    updateInventoryCallback: (inventory: Array<Coin>) => void
+    map: leaflet.Map,
+    playerLocation: leaflet.LatLngTuple,
+    updateInventoryCallback: (inventory: Array<Coin>) => void,
   ) {
     this.map = map;
     this.playerLocation = playerLocation;
@@ -66,13 +66,18 @@ class CacheManager {
   populateNeighborhood(): void {
     this.cacheLayer = leaflet.layerGroup().addTo(this.map);
     for (
-      let y = this.playerLocation[0] - CONFIG.TILE_DEGREES * CONFIG.NEIGHBORHOOD_SIZE;
-      y < this.playerLocation[0] + CONFIG.TILE_DEGREES * CONFIG.NEIGHBORHOOD_SIZE;
+      let y = this.playerLocation[0] -
+        CONFIG.TILE_DEGREES * CONFIG.NEIGHBORHOOD_SIZE;
+      y <
+        this.playerLocation[0] + CONFIG.TILE_DEGREES * CONFIG.NEIGHBORHOOD_SIZE;
       y += CONFIG.TILE_DEGREES
     ) {
       for (
-        let x = this.playerLocation[1] - CONFIG.TILE_DEGREES * CONFIG.NEIGHBORHOOD_SIZE;
-        x < this.playerLocation[1] + CONFIG.TILE_DEGREES * CONFIG.NEIGHBORHOOD_SIZE;
+        let x = this.playerLocation[1] -
+          CONFIG.TILE_DEGREES * CONFIG.NEIGHBORHOOD_SIZE;
+        x <
+          this.playerLocation[1] +
+            CONFIG.TILE_DEGREES * CONFIG.NEIGHBORHOOD_SIZE;
         x += CONFIG.TILE_DEGREES
       ) {
         if (luck([y, x].toString()) <= CONFIG.CACHE_SPAWN_PROBABILITY) {
@@ -94,7 +99,9 @@ class CacheManager {
     rect.bindPopup(() => {
       this.restoreCache(this.getKey(y, x));
       const cachedCoins = this.getCell(y, x).coins;
-      const playerInventory = JSON.parse(localStorage.getItem("playerCoin") || "[]");
+      const playerInventory = JSON.parse(
+        localStorage.getItem("playerCoin") || "[]",
+      );
 
       const popup = document.createElement("div");
       popup.innerHTML = `
@@ -107,7 +114,10 @@ class CacheManager {
         "click",
         () => {
           // Move a coin from cache to player inventory
-          const updatedPlayerInventory = this.updateCache(playerInventory, cachedCoins);
+          const updatedPlayerInventory = this.updateCache(
+            playerInventory,
+            cachedCoins,
+          );
           this.saveCache(this.getKey(y, x), this.getCell(y, x));
           this.updateInventoryCallback(updatedPlayerInventory);
           popup.querySelector<HTMLSpanElement>("#cache-coin")!.innerHTML =
@@ -119,7 +129,10 @@ class CacheManager {
         "click",
         () => {
           // Move a coin from player inventory to cache
-          const updatedPlayerInventory = this.updateCache(cachedCoins, playerInventory);
+          const updatedPlayerInventory = this.updateCache(
+            cachedCoins,
+            playerInventory,
+          );
           this.saveCache(this.getKey(y, x), this.getCell(y, x));
           this.updateInventoryCallback(updatedPlayerInventory);
           popup.querySelector<HTMLSpanElement>("#cache-coin")!.innerHTML =
@@ -131,7 +144,10 @@ class CacheManager {
     });
   }
 
-  private updateCache(targetInventory: Array<Coin>, sourceInventory: Array<Coin>): Array<Coin> {
+  private updateCache(
+    targetInventory: Array<Coin>,
+    sourceInventory: Array<Coin>,
+  ): Array<Coin> {
     if (sourceInventory.length > 0) {
       const coin = sourceInventory.pop()!;
       targetInventory.push(coin);
@@ -193,10 +209,10 @@ class UIController {
   private resetGameCallback: () => void;
 
   constructor(
-    map: leaflet.Map, 
-    statusPanel: HTMLDivElement, 
+    map: leaflet.Map,
+    statusPanel: HTMLDivElement,
     updateLocationCallback: (lat: number, lon: number) => void,
-    resetGameCallback: () => void
+    resetGameCallback: () => void,
   ) {
     this.map = map;
     this.statusPanel = statusPanel;
@@ -294,16 +310,16 @@ class GameState {
     );
 
     this.cacheManager = new CacheManager(
-      this.map, 
-      this.playerLocation, 
-      this.updatePlayerInventory.bind(this)
+      this.map,
+      this.playerLocation,
+      this.updatePlayerInventory.bind(this),
     );
 
     this.uiController = new UIController(
-      this.map, 
-      this.statusPanel, 
+      this.map,
+      this.statusPanel,
       this.movePlayer.bind(this),
-      this.resetGame.bind(this)
+      this.resetGame.bind(this),
     );
 
     this.setupLocationEvents();
@@ -360,7 +376,7 @@ class GameState {
     this.polyline.setLatLngs(this.path);
     this.map.panTo(this.playerLocation);
     this.playerMarker.setLatLng(this.playerLocation);
-    
+
     this.cacheManager.clearCaches();
     this.cacheManager.updatePlayerLocation(this.playerLocation);
     this.populateNeighborhood();
